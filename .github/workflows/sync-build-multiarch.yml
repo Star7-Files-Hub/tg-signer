@@ -11,7 +11,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout fork
+      - name: Checkout my fork
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -23,8 +23,18 @@ jobs:
           git config --global user.email "actions@github.com"
           git remote add upstream https://github.com/amchii/tg-signer.git || true
           git fetch upstream
+
           git checkout main
-          git merge upstream/main --allow-unrelated-histories
+          
+          # 🔥 关键：合并时 跳过 官方 docker 文件夹，不覆盖你的配置
+          git merge upstream/main --no-commit --allow-unrelated-histories
+          
+          # 🔥 强制保留我们自己的文件，放弃上游的 docker/ 目录
+          git checkout HEAD -- docker/ 2>/dev/null || true
+          rm -rf docker/
+          git add .
+          
+          git commit -m "sync upstream, skip official docker folder" || true
           git push origin main
 
       - name: Set version
