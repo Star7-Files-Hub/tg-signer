@@ -1,0 +1,11 @@
+version: '3'
+
+services:
+  tg-signer:
+    image: stars7/tg-signer:latest
+    container_name: tg-signer
+    ports:
+      - "7001:7001"
+    volumes:
+      - ./.signer:/app/.signer
+    restart: unless-stopped
