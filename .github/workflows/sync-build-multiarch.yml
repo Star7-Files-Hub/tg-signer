@@ -1,4 +1,4 @@
-name: Sync Upstream + Multiarch Build Push
+name: Sync Upstream + Build from official docker/Dockerfile
 
 on:
   schedule:
@@ -17,24 +17,15 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN }}
 
+      # 自动同步上游，保留官方所有文件
       - name: Sync with upstream
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           git remote add upstream https://github.com/amchii/tg-signer.git || true
           git fetch upstream
-
           git checkout main
-          
-          # 🔥 关键：合并时 跳过 官方 docker 文件夹，不覆盖你的配置
-          git merge upstream/main --no-commit --allow-unrelated-histories
-          
-          # 🔥 强制保留我们自己的文件，放弃上游的 docker/ 目录
-          git checkout HEAD -- docker/ 2>/dev/null || true
-          rm -rf docker/
-          git add .
-          
-          git commit -m "sync upstream, skip official docker folder" || true
+          git merge upstream/main --allow-unrelated-histories
           git push origin main
 
       - name: Set version
@@ -54,12 +45,14 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      # ✅ 关键：从官方 docker/Dockerfile 构建
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: docker/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/tg-signer:latest
-            ${{ secrets.DOCKER_USERNAME }}/tg-signer:${{ steps.version.outputs.VERSION }}
+            stars7/tg-signer:latest
+            stars7/tg-signer:${{ steps.version.outputs.VERSION }}
