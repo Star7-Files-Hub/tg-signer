@@ -17,7 +17,15 @@ RUN apt-get update && \
     echo ${TZ} > /etc/timezone && \
     rm -rf /var/lib/apt/lists/*
 
+# 语法已修复：续行符正确，同时安装 tgcrypto 和 gui
 RUN pip install /tmp/*.whl && \
     pip install -U "tg-signer[tgcrypto,gui]"
 
 WORKDIR /opt/tg-signer
+VOLUME /opt/tg-signer
+
+# 官方 WebUI 默认端口是 8080
+EXPOSE 8080
+
+# 官方正确启动命令（可在 compose 中覆盖）
+CMD ["tg-signer", "webgui", "--auth-code", "averycomplexcode", "--host", "0.0.0.0", "--port", "8080"]
