@@ -447,7 +447,7 @@ class BaseUserWorker(Generic[ConfigT]):
 
                     async def load_latest_chats():
                         latest_chats = []
-                        async for dialog in app.get_dialogs(limit=num_of_dialogs):
+                        async for dialog in app.get_dialogs(limit=None):
                             chat = dialog.chat
                             latest_chats.append(
                                 {
