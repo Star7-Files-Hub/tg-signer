@@ -193,7 +193,7 @@ def list_(obj):
 @click.option(
     "--num-of-dialogs",
     "-n",
-    default=50,
+    default=5000,
     show_default=True,
     type=int,
     help="获取最近N个对话, 请确保想要签到的对话在最近N个对话内",
@@ -216,7 +216,7 @@ def logout(obj):
 @click.option(
     "--num-of-dialogs",
     "-n",
-    default=50,
+    default=5000,
     show_default=True,
     type=int,
     help="获取最近N个对话, 请确保想要签到的对话在最近N个对话内",
@@ -240,7 +240,7 @@ def run(obj, task_names, num_of_dialogs):
     "--num-of-dialogs",
     "-n",
     "num_of_dialogs",
-    default=50,
+    default=5000,
     show_default=True,
     type=int,
     help="获取最近N个对话, 请确保想要签到的对话在最近N个对话内",
@@ -433,7 +433,7 @@ def list_schedule_messages(obj, chat_id):
 @click.option(
     "--num-of-dialogs",
     "-n",
-    default=50,
+    default=5000,
     show_default=True,
     type=int,
     help="获取最近N个对话, 请确保想要签到的对话在最近N个对话内",
