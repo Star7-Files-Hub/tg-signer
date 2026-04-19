@@ -1,0 +1,161 @@
+# TG Signer 增强版 - 生产环境Docker镜像
+# 基于Alpine Linux构建，最小化镜像大小
+
+FROM python:3.11-alpine AS builder
+
+# 设置工作目录
+WORKDIR /app
+
+# 安装构建依赖
+RUN apk add --no-cache \
+    gcc \
+    musl-dev \
+    linux-headers \
+    postgresql-dev \
+    jpeg-dev \
+    zlib-dev \
+    freetype-dev \
+    lcms2-dev \
+    openjpeg-dev \
+    tiff-dev \
+    libwebp-dev \
+    harfbuzz-dev \
+    graphite-dev \
+    && pip install --upgrade pip setuptools wheel
+
+# 复制项目文件
+COPY . .
+
+# 安装Python依赖到虚拟环境
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# 安装核心依赖
+RUN pip install --no-cache-dir click pydantic croniter json_repair typing-extensions httpx
+
+# 安装GUI依赖
+RUN pip install --no-cache-dir nicegui fastapi starlette uvicorn[standard] aiohttp
+
+# 安装可选优化包
+RUN pip install --no-cache-dir tgcrypto psutil watchdog
+
+# 安装项目本身
+RUN pip install --no-cache-dir -e .
+
+# === 最终阶段 ===
+FROM python:3.11-alpine
+
+# 创建非root用户
+RUN addgroup -g 1001 -S tgsigner && \
+    adduser -u 1001 -S tgsigner -G tgsigner
+
+# 创建工作目录
+WORKDIR /app
+RUN mkdir -p /app/.signer/logs && \
+    chown -R tgsigner:tgsigner /app
+
+# 从构建阶段复制虚拟环境和应用代码
+COPY --from=builder --chown=tgsigner:tgsigner /opt/venv /opt/venv
+COPY --from=builder --chown=tgsigner:tgsigner /app /app
+
+# 设置环境变量
+ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV NICEGUI_RELOAD=false
+ENV UVICORN_WORKERS=4
+ENV UVICORN_LOG_LEVEL=info
+
+# 暴露端口
+EXPOSE 8080
+
+# 设置安全权限
+USER tgsigner
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/api/health || exit 1
+
+# 启动命令
+CMD ["nicegui", "--app", "tg_signer.webui.enhanced_app:main", "--host", "0.0.0.0", "--port", "8080"]
+
+# === 多架构支持 ===
+# 构建时指定平台（如果需要）
+# docker buildx create --use
+# docker buildx build --platform linux/amd64,linux/arm64 -t tg-signer-enhanced:latest --push .
+
+
+# === 开发版本Dockerfile ===
+# FROM python:3.11-slim AS dev
+
+# WORKDIR /app
+# COPY requirements.txt .
+# RUN pip install -r requirements.txt
+
+# COPY . .
+
+# ENV FLASK_ENV=development
+# EXPOSE 8080 5000
+
+# CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "app:app"]
+
+
+# === 测试Dockerfile ===
+# FROM python:3.11-alpine AS test
+
+# WORKDIR /app
+# COPY . .
+
+# ENV PATH="/opt/venv/bin:$PATH"
+# RUN python -m venv /opt/venv && \
+#     /opt/venv/bin/pip install -e . && \
+#     /opt/venv/bin/pip install pytest pytest-cov
+
+# CMD ["/opt/venv/bin/pytest", "-v", "--tb=short"]
+
+
+# === 生产优化建议 ===
+
+# 1. 使用多阶段构建减少镜像大小
+# 2. 使用非root用户运行容器
+# 3. 设置资源限制
+#    docker run --memory="1g" --cpus="2" tg-signer-enhanced
+#
+# 4. 配置持久化存储
+#    docker volume create tg-signer-data
+#    docker run -v tg-signer-data:/app/.signer tg-signer-enhanced
+#
+# 5. 启用日志轮转
+#    docker run -v ./logs:/app/.signer/logs tg-signer-enhanced
+#
+# 6. 安全加固
+#    docker run --read-only --tmpfs /tmp tg-signer-enhanced
+#
+# 7. 监控集成
+#    docker stats tg-signer-enhanced
+#    docker logs -f tg-signer-enhanced
+
+
+# === 构建和运行命令 ===
+
+# 构建镜像
+# docker build -f Dockerfile.prod -t tg-signer-enhanced:latest .
+
+# 运行容器
+# docker run -d \
+#   --name tg-signer \
+#   -p 8080:8080 \
+#   -v ./data:/app/.signer \
+#   -e TG_API_ID=your_api_id \
+#   -e TG_API_HASH=your_api_hash \
+#   -e TG_SIGNER_GUI_AUTHCODE=your_password \
+#   tg-signer-enhanced:latest
+
+# 查看日志
+# docker logs -f tg-signer
+
+# 进入容器调试
+# docker exec -it tg-signer sh
+
+# 停止容器
+# docker stop tg-signer

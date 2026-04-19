@@ -227,10 +227,10 @@ def list_sign_records(obj, task_name: str | None, limit: int, user_id: str | Non
 @click.option(
     "--num-of-dialogs",
     "-n",
-    default=50,
+    default=200,
     show_default=True,
     type=int,
-    help="获取最近N个对话, 请确保想要签到的对话在最近N个对话内",
+    help="获取最近N个对话, 建议设置足够大的数值避免遗漏",
 )
 @click.pass_obj
 def login(obj, num_of_dialogs):
@@ -250,10 +250,10 @@ def logout(obj):
 @click.option(
     "--num-of-dialogs",
     "-n",
-    default=50,
+    default=200,
     show_default=True,
     type=int,
-    help="获取最近N个对话, 请确保想要签到的对话在最近N个对话内",
+    help="获取最近N个对话, 建议设置足够大的数值避免遗漏",
 )
 @click.pass_obj
 def run(obj, task_names, num_of_dialogs):
@@ -274,10 +274,10 @@ def run(obj, task_names, num_of_dialogs):
     "--num-of-dialogs",
     "-n",
     "num_of_dialogs",
-    default=50,
+    default=200,
     show_default=True,
     type=int,
-    help="获取最近N个对话, 请确保想要签到的对话在最近N个对话内",
+    help="获取最近N个对话, 建议设置足够大的数值避免遗漏",
 )
 @click.pass_obj
 def run_once(obj, task_name, num_of_dialogs):

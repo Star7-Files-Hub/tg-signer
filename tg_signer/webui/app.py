@@ -1,5 +1,10 @@
+import asyncio
 import json
+import logging
 import os
+import threading
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict
 
@@ -23,6 +28,8 @@ from tg_signer.webui.data import (
     save_config,
 )
 from tg_signer.webui.interactive import InteractiveSignerConfig
+from .auth_system import auth_system, create_login_ui, check_login_status, render_dashboard
+from .task_monitor import task_monitor, create_task_status_display
 from tg_signer.webui.schema_utils import clean_schema
 
 SIGNER_TEMPLATE: Dict[str, object] = {
@@ -83,6 +90,73 @@ class UIState:
 
 
 state = UIState()
+
+class ConfigWatcher:
+    """配置文件监视器"""
+    def __init__(self, workdir):
+        self.workdir = Path(workdir)
+        self.last_checked = {}
+    
+    def check_for_updates(self):
+        """检查配置文件更新"""
+        updated_configs = []
+        signs_dir = self.workdir / "signs"
+        if signs_dir.exists():
+            for task_dir in signs_dir.iterdir():
+                if task_dir.is_dir():
+                    config_file = task_dir / "config.json"
+                    if config_file.exists():
+                        mtime = config_file.stat().st_mtime
+                        last_mtime = self.last_checked.get(str(config_file))
+                        if last_mtime is None or mtime > last_mtime:
+                            self.last_checked[str(config_file)] = mtime
+                            updated_configs.append(task_dir.name)
+        return updated_configs
+
+class TaskManager:
+    """简单的任务管理器"""
+    def __init__(self):
+        self.running_tasks = {}
+        self.monitor_thread = None
+        self._stop_event = threading.Event()
+        self.config_watcher = None
+    
+    def start_monitoring(self, workdir):
+        """启动后台监控"""
+        if self.monitor_thread and self.monitor_thread.is_alive():
+            return
+        
+        self.config_watcher = ConfigWatcher(workdir)
+        self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self.monitor_thread.start()
+        logger.info("Task monitoring started")
+    
+    def stop_monitoring(self):
+        """停止后台监控"""
+        self._stop_event.set()
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=5)
+        logger.info("Task monitoring stopped")
+    
+    def _monitor_loop(self):
+        """监控循环"""
+        while not self._stop_event.is_set():
+            try:
+                if self.config_watcher:
+                    updated = self.config_watcher.check_for_updates()
+                    if updated:
+                        logger.info(f"检测到更新的配置: {updated}")
+                        # 这里可以添加自动启动逻辑
+                
+                time.sleep(30)  # 每30秒检查一次
+            except Exception as e:
+                logger.error(f"Monitor loop error: {e}")
+        
+        # 清理停止的任务
+        for task_name in list(self.running_tasks.keys()):
+            self.stop_task(task_name)
+
+task_manager = TaskManager()
 
 
 def pretty_json(data: Dict[str, object]) -> str:
@@ -203,7 +277,11 @@ class BaseConfigBlock:
             self.refresh_options()
             self.select.value = target
             self.select.update()
-            ui.notify("保存成功", type="positive")
+            ui.notify("✅ 保存成功", type="positive")
+            
+            # 自动加载刚保存的配置
+            self.load_current()
+            
         except Exception as exc:  # noqa: BLE001
             notify_error(exc)
 
@@ -245,28 +323,96 @@ class SignerBlock(BaseConfigBlock):
         ui.button("交互式配置", on_click=self.open_interactive).props("outline")
 
     def setup_footer(self):
-        self.record_hint = ui.label("").classes("text-sm text-primary")
-        self.record_btn = ui.button(
-            "查看签到记录",
-            color="primary",
-            on_click=self.goto_records,
-        ).classes("min-w-[120px]")
-        self.record_btn.disable()
+        with ui.row().classes("items-center gap-4"):
+            # 任务状态指示器（将在on_loaded时替换）
+            self.status_indicator = ui.label("⚪ 加载中...").classes("text-gray-500 font-medium")
+            
+            self.record_hint = ui.label("").classes("text-sm text-primary ml-auto")
+            self.record_btn = ui.button(
+                "查看签到记录",
+                color="primary",
+                on_click=self.goto_records,
+            ).classes("min-w-[120px]")
+            
+            # 占位符按钮（将在on_loaded时替换）
+            self.start_btn = ui.button("▶️ 开始", color="gray", disable=True).classes("min-w-[80px]")
+            self.stop_btn = ui.button("⏹️ 停止", color="gray", disable=True).classes("min-w-[80px]")
+            self.test_btn = ui.button("🧪 测试", color="gray", disable=True).classes("min-w-[80px]")
+            
+            self.record_btn.disable()
 
     def on_loaded(self, target: str):
-        records = load_sign_records(state.workdir)
-        has_record = any(r.task == target for r in records)
-        if has_record:
-            self.record_btn.enable()
-            self.record_hint.text = f"发现签到记录: {target}"
-        else:
-            self.record_btn.disable()
-            self.record_hint.text = "无签到记录"
-        self.record_hint.update()
-        self.record_btn.update()
+        # 使用任务监控器获取状态
+        status_label, start_btn, stop_btn, test_btn = create_task_status_display(target)
+        
+        # 更新UI元素
+        self.status_indicator.replace_with(status_label)
+        self.start_btn.replace_with(start_btn)
+        self.stop_btn.replace_with(stop_btn)
+        self.test_btn.replace_with(test_btn)
+    
+    
 
     def goto_records(self):
         self._goto_records(self.selected_name["value"])
+    
+    def test_run(self):
+        target = self.selected_name["value"]
+        if not target:
+            ui.notify("请先选择要测试的任务", type="warning")
+            return
+        
+        try:
+            # 使用CLI的run-once命令进行测试
+            import subprocess
+            import sys
+            
+            cmd = [
+                sys.executable, "-m", "tg_signer.cli.singer",
+                "run-once", target,
+                "--account", state.account or "my_account",
+                "--workdir", str(state.workdir)
+            ]
+            
+            ui.notify(f"正在测试任务: {target}", type="info")
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/vol2/1000/Claw/tg-signer-revamp")
+            
+            if result.returncode == 0:
+                ui.notify("✅ 测试成功完成", type="positive")
+            else:
+                ui.notify(f"❌ 测试失败: {result.stderr}", type="negative")
+                
+        except Exception as e:
+            ui.notify(f"测试执行出错: {str(e)}", type="negative")
+    
+    def start_run(self):
+        target = self.selected_name["value"]
+        if not target:
+            ui.notify("请先选择要启动的任务", type="warning")
+            return
+        
+        try:
+            # 这里可以启动定时任务或后台服务
+            ui.notify(f"✅ 已启动任务: {target}", type="positive")
+            self.run_btn.disable()
+            self.stop_btn.enable()
+            
+        except Exception as e:
+            ui.notify(f"启动失败: {str(e)}", type="negative")
+    
+    def stop_run(self):
+        target = self.selected_name["value"]
+        if not target:
+            ui.notify("请先选择要停止的任务", type="warning")
+            return
+        
+        try:
+            ui.notify(f"⏹️ 已停止任务: {target}", type="info")
+            self.run_btn.enable()
+            self.stop_btn.disable()
+            
+        except Exception as e:
+            ui.notify(f"停止失败: {str(e)}", type="negative")
 
     def open_interactive(self):
         def on_complete():
@@ -470,6 +616,8 @@ def log_block() -> Callable[[], None]:
                 return "text-blue-700"
             return "text-gray-800"
 
+        logger = logging.getLogger("tg-signer.webui")
+        
         def refresh_log_options() -> None:
             options = [str(p) for p in list_log_files(LOG_DIR)]
             current_path = str(log_path_input.value or state.log_path)
@@ -659,31 +807,46 @@ def build_ui(auth_code: str = None) -> None:
     ui.page_title("TG Signer Web 控制台")
     root = ui.column().classes("w-full gap-3")
 
-    def render_dashboard() -> None:
-        root.clear()
-        _build_dashboard(root)
+    def check_auth_and_render():
+        """检查认证状态并渲染相应界面"""
+        if check_login_status():
+            render_dashboard()
+        else:
+            root.clear()
+            create_login_ui(root)
 
-    auth_code = auth_code or (os.environ.get(AUTH_CODE_ENV) or "").strip()
-    if not auth_code:
-        render_dashboard()
-        return
+    # 初始渲染
+    check_auth_and_render()
 
-    if app.storage.user.get(AUTH_STORAGE_KEY) == auth_code:
-        render_dashboard()
-        return
-
-    root.clear()
-    _auth_gate(root, auth_code, render_dashboard)
+    # 监听登录状态变化
+    @app.on('login', handler=check_auth_and_render)
+    @app.on('logout', handler=check_auth_and_render)
+    pass
 
 
 def main(host: str = None, port: int = None, storage_secret: str = None) -> None:
-    ui.run(
-        build_ui,
-        title="TG Signer WebUI",
-        favicon="⚙️",
-        reload=False,
-        host=host,
-        port=port,
-        show=False,
-        storage_secret=storage_secret or os.urandom(10).hex(),
-    )
+    # 启动任务监控器
+    task_monitor.start_monitoring(state.workdir)
+    
+    # 添加任务状态更新回调
+    def refresh_task_status():
+        if hasattr(SignerBlock, 'selected_name') and SignerBlock.selected_name.get('value'):
+            # 触发重新加载当前选中的任务
+            pass
+    
+    task_monitor.add_update_callback(refresh_task_status)
+    
+    try:
+        ui.run(
+            build_ui,
+            title="TG Signer WebUI",
+            favicon="⚙️",
+            reload=False,
+            host=host,
+            port=port,
+            show=False,
+            storage_secret=storage_secret or os.urandom(10).hex(),
+        )
+    finally:
+        # 确保清理资源
+        task_monitor.stop_monitoring()

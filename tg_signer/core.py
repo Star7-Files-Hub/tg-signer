@@ -447,7 +447,7 @@ class BaseUserWorker(Generic[ConfigT]):
         ) as fp:
             fp.write(str(user))
 
-    async def login(self, num_of_dialogs=20, print_chat=True):
+    async def login(self, num_of_dialogs=200, print_chat=True):
         self.log("开始登录...")
         app = self.app
         key = app.key
